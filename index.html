@@ -587,9 +587,14 @@
           </div>
         </div>
 
-        <button class="btn btn-success" onclick="addToCalendar()" style="width:100%; padding:15px; font-size:15px">
-          📅 Googleカレンダーに登録
-        </button>
+        <div style="display:flex; gap:10px">
+          <button class="btn btn-success" onclick="addToCalendar('google')" style="flex:1; padding:15px; font-size:14px">
+            📅 Google
+          </button>
+          <button class="btn" onclick="addToCalendar('yahoo')" style="flex:1; padding:15px; font-size:14px; background:linear-gradient(135deg,#6f00cc,#a040ff); color:white; box-shadow:0 4px 20px rgba(111,0,204,0.3)">
+            📅 Yahoo!
+          </button>
+        </div>
       </div>
     </div>
 
@@ -766,16 +771,19 @@
                 },
                 {
                   type: 'text',
-                  text: `この歯医者の診察券や予約票から、次の情報をJSON形式のみで抽出してください。余計なテキストは不要です。
+                  text: `この歯医者の診察券や予約票には、過去の受診歴と今後の予約が混在しています。
+今日の日付は${new Date().toLocaleDateString('ja-JP', {year:'numeric',month:'long',day:'numeric'})}です。
+
+診察券に記載されたすべての日付のうち、【今日以降で最も近い未来の予約】を1件だけ選んで、次のJSON形式のみで返してください。余計なテキスト・マークダウン不要。
 
 {
   "clinic": "医院名（不明な場合は空文字）",
-  "date": "予約日（YYYY-MM-DD形式。年が省略されていたら今年か来年を推測）",
+  "date": "予約日（YYYY-MM-DD形式。西暦が書かれていない場合は今日の日付を基準に直近の未来になるよう${new Date().getFullYear()}年か${new Date().getFullYear()+1}年を判断して補完）",
   "time": "予約時刻（HH:MM形式、24時間）",
   "note": "診療内容や備考（わかる範囲で）"
 }
 
-画像から読み取れない場合は空文字にしてください。日付・時刻は必ず正確に読み取ってください。`
+重要：過去の日付は絶対に選ばないこと。複数の未来の予約がある場合は最も近いものだけを返すこと。`
                 }
               ]
             }]
@@ -825,7 +833,7 @@
       }
     }
 
-    function addToCalendar() {
+    function addToCalendar(service) {
       const clinic = document.getElementById('res-clinic').value || '歯科予約';
       const datetimeEl = document.getElementById('res-datetime');
       const note = document.getElementById('res-note').value;
@@ -834,31 +842,52 @@
       let time = datetimeEl.dataset.time;
 
       if (!date) {
-        // Try to parse from display value
         showStatus('日付を確認できませんでした。直接入力欄を編集してください', 'error');
         return;
       }
 
-      const title = encodeURIComponent(clinic + (note ? '【' + note + '】' : ''));
-      
-      let startStr, endStr;
-      if (time) {
-        // With time
-        const start = new Date(`${date}T${time}:00`);
-        const end = new Date(start.getTime() + 60 * 60000); // +1 hour
-        startStr = start.toISOString().replace(/-|:|\.\d{3}/g, '').slice(0, 15) + 'Z';
-        endStr = end.toISOString().replace(/-|:|\.\d{3}/g, '').slice(0, 15) + 'Z';
+      const titleRaw = clinic + (note ? '【' + note + '】' : '');
+      const title = encodeURIComponent(titleRaw);
+      const details = encodeURIComponent('歯科予約スキャナーで自動登録');
+
+      let url;
+      if (service === 'yahoo') {
+        // Yahoo!カレンダー形式
+        // ST=YYYYMMDDTHHmmss  ET=YYYYMMDDTHHmmss
+        let st, et;
+        if (time) {
+          const start = new Date(`${date}T${time}:00`);
+          const end = new Date(start.getTime() + 60 * 60000);
+          const fmt = d => d.getFullYear().toString()
+            + String(d.getMonth()+1).padStart(2,'0')
+            + String(d.getDate()).padStart(2,'0')
+            + 'T' + String(d.getHours()).padStart(2,'0')
+            + String(d.getMinutes()).padStart(2,'0') + '00';
+          st = fmt(start);
+          et = fmt(end);
+        } else {
+          st = date.replace(/-/g,'') + 'T000000';
+          et = date.replace(/-/g,'') + 'T235900';
+        }
+        url = `https://calendar.yahoo.co.jp/?v=60&view=d&type=20&title=${title}&st=${st}&et=${et}&desc=${details}`;
+        showStatus('Yahoo!カレンダーが開きます。「保存」をタップして完了！', 'success');
       } else {
-        // All-day
-        startStr = date.replace(/-/g, '');
-        endStr = startStr;
+        // Googleカレンダー形式
+        let startStr, endStr;
+        if (time) {
+          const start = new Date(`${date}T${time}:00`);
+          const end = new Date(start.getTime() + 60 * 60000);
+          startStr = start.toISOString().replace(/-|:|\.\d{3}/g, '').slice(0, 15) + 'Z';
+          endStr   = end.toISOString().replace(/-|:|\.\d{3}/g, '').slice(0, 15) + 'Z';
+        } else {
+          startStr = date.replace(/-/g, '');
+          endStr = startStr;
+        }
+        url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startStr}/${endStr}&details=${details}`;
+        showStatus('Googleカレンダーが開きます。「保存」をタップして完了！', 'success');
       }
 
-      const details = encodeURIComponent('歯科予約スキャナーで自動登録');
-      const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startStr}/${endStr}&details=${details}`;
-      
       window.open(url, '_blank');
-      showStatus('Googleカレンダーが開きます。「保存」をタップして完了！', 'success');
     }
 
     // Cleanup on page hide
